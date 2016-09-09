@@ -104,7 +104,6 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		}
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
-		// selResp.Rows = rows
 		selResp.Chunks = rowsToChunks(rows)
 		if err != nil {
 			resp.OtherError = err.Error()
