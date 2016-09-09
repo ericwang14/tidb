@@ -104,7 +104,8 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		}
 		selResp := new(tipb.SelectResponse)
 		selResp.Error = toPBError(err)
-		selResp.Rows = rows
+		// selResp.Rows = rows
+		selResp.Chunks = rowsToChunks(rows)
 		if err != nil {
 			resp.OtherError = err.Error()
 		}
@@ -115,6 +116,49 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 		resp.Data = data
 	}
 	return resp, nil
+}
+
+const rowsPerChunk = 64
+
+func rowsToChunks(rows []*tipb.Row) []tipb.Chunk {
+	chunks := make([]tipb.Chunk, 0, (len(rows)/rowsPerChunk)+1)
+	for i := 0; i < len(rows); i += rowsPerChunk {
+		end := i + rowsPerChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+
+		chunk := rowsToChunk(rows[i:end])
+		chunks = append(chunks, chunk)
+	}
+	return chunks
+}
+
+func rowsToChunk(rows []*tipb.Row) tipb.Chunk {
+	size := 0
+	for _, row := range rows {
+		size += len(row.Data)
+	}
+
+	chunk := tipb.Chunk{
+		RowsData: make([]byte, 0, size),
+		RowsMeta: make([]tipb.RowMeta, len(rows)),
+	}
+
+	for i := 0; i < len(rows); i++ {
+		rowsMeta := &chunk.RowsMeta[i]
+		rowsMeta.Length = int64(len(rows[i].Data))
+		if handleBytes := rows[i].GetHandle(); len(handleBytes) > 0 {
+			_, datum, err := codec.DecodeOne(handleBytes)
+			if err != nil {
+				panic(err)
+			}
+			rowsMeta.Handle = datum.GetInt64()
+		}
+		chunk.RowsData = append(chunk.RowsData, rows[i].Data...)
+	}
+
+	return chunk
 }
 
 func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
